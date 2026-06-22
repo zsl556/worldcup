@@ -577,9 +577,15 @@
             try {
                 showStatus('⏳ 正在保存到云端...', 'loading');
                 
+                console.log('开始保存数据到 GitHub...');
+                console.log('仓库:', `${GITHUB_OWNER}/${GITHUB_REPO}`);
+                console.log('文件路径:', DATA_FILE_PATH);
+                
                 // 收集数据
                 const data = collectTableData();
                 const content = JSON.stringify(data, null, 2);
+                
+                console.log('数据内容:', data);
                 
                 // 先将内容转换为 base64
                 const base64Content = btoa(unescape(encodeURIComponent(content)));
@@ -587,9 +593,12 @@
                 // GitHub API URL
                 const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${DATA_FILE_PATH}`;
                 
+                console.log('API URL:', apiUrl);
+                
                 // 先检查文件是否存在
                 let sha = null;
                 try {
+                    console.log('检查文件是否存在...');
                     const checkResponse = await fetch(apiUrl, {
                         headers: {
                             'Authorization': `token ${token}`,
@@ -597,12 +606,19 @@
                         }
                     });
                     
+                    console.log('检查响应状态:', checkResponse.status);
+                    
                     if (checkResponse.ok) {
                         const existingFile = await checkResponse.json();
                         sha = existingFile.sha;
+                        console.log('文件已存在，SHA:', sha);
+                    } else if (checkResponse.status === 404) {
+                        console.log('文件不存在，将创建新文件');
+                    } else {
+                        console.warn('检查文件时出错:', checkResponse.status);
                     }
                 } catch (e) {
-                    // 文件不存在，继续创建
+                    console.log('文件不存在或检查失败，将创建新文件', e);
                 }
                 
                 // 准备请求数据
@@ -613,7 +629,12 @@
                 
                 if (sha) {
                     requestData.sha = sha;
+                    console.log('包含 SHA，将更新现有文件');
+                } else {
+                    console.log('不包含 SHA，将创建新文件');
                 }
+                
+                console.log('发送 PUT 请求...');
                 
                 // 发送请求到 GitHub API
                 const response = await fetch(apiUrl, {
@@ -626,18 +647,50 @@
                     body: JSON.stringify(requestData)
                 });
                 
+                console.log('响应状态:', response.status);
+                console.log('响应头:', response.headers);
+                
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || '保存失败');
+                    const errorText = await response.text();
+                    console.error('错误响应:', errorText);
+                    
+                    let errorMessage = `HTTP ${response.status}: `;
+                    
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.message) {
+                            errorMessage += errorJson.message;
+                        }
+                        if (errorJson.errors && errorJson.errors.length > 0) {
+                            errorMessage += ' - ' + errorJson.errors.map(e => e.message).join(', ');
+                        }
+                    } catch (e) {
+                        errorMessage += errorText;
+                    }
+                    
+                    // 根据状态码提供更具体的提示
+                    if (response.status === 401) {
+                        errorMessage = 'Token 无效或已过期，请检查 Token 是否正确';
+                    } else if (response.status === 403) {
+                        errorMessage = '权限不足，请确保 Token 有 repo 权限';
+                    } else if (response.status === 404) {
+                        errorMessage = '仓库不存在或无权访问，请检查用户名和仓库名';
+                    }
+                    
+                    throw new Error(errorMessage);
                 }
                 
-                showStatus('✅ 数据已成功保存到云端！', 'success');
+                const result = await response.json();
+                console.log('保存成功！', result);
                 
-                // 不再保存 token 到本地存储，因为已内置
+                showStatus('✅ 数据已成功保存到云端！', 'success');
                 
             } catch (error) {
                 console.error('保存失败:', error);
                 showStatus('❌ 保存失败：' + error.message, 'error');
+                
+                // 显示详细错误信息（仅开发时使用）
+                alert('保存失败！\n\n错误信息：' + error.message + '\n\n请打开浏览器控制台（F12）查看详细信息');
             }
         }
         
