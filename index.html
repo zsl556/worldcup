@@ -93,6 +93,72 @@
         .save-button:hover {
             background-color: #45a049;
         }
+        .cloud-save-button {
+            display: block;
+            margin: 10px auto;
+            padding: 12px 30px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .cloud-save-button:hover {
+            background-color: #1976D2;
+        }
+        .token-input-container {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+        .token-input-container label {
+            display: block;
+            margin-bottom: 8px;
+            color: #90EE90;
+            font-weight: bold;
+        }
+        .token-input {
+            width: 100%;
+            padding: 8px;
+            background-color: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: white;
+            font-family: monospace;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 8px;
+        }
+        .help-text a {
+            color: #2196F3;
+        }
+        .status-message {
+            text-align: center;
+            padding: 10px;
+            margin: 10px auto;
+            max-width: 600px;
+            border-radius: 5px;
+            display: none;
+        }
+        .status-success {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .status-error {
+            background-color: #FF5252;
+            color: white;
+        }
+        .status-loading {
+            background-color: #FFC107;
+            color: black;
+        }
 
     </style>
 </head>
@@ -100,6 +166,9 @@
     <div class="container">
         <div id="firstPlaceDisplay" class="first-place"></div>
         <div class="header">争霸世界杯</div>
+        
+        <!-- 状态提示 -->
+        <div id="statusMessage" class="status-message"></div>
         
         <table id="competitionTable">
             <thead>
@@ -269,10 +338,27 @@
             备注：每天下注时间截止到晚上八点
         </div>
         
-        <button class="save-button" onclick="saveData()">💾 保存数据</button>
+        <!-- Token 输入框（已隐藏，Token 已内置） -->
+        <div class="token-input-container" style="display: none;">
+            <label for="githubToken">🔑 GitHub Token（已内置）：</label>
+            <input type="password" id="githubToken" class="token-input" value="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">
+            <div class="help-text">
+                💡 Token 已内置，无需手动输入
+            </div>
+        </div>
+        
+        <!-- 保存按钮 -->
+        <button class="cloud-save-button" onclick="saveToGitHub()">☁️ 保存到云端（GitHub）</button>
+        <button class="save-button" onclick="saveData()">💾 下载到本地</button>
     </div>
 
     <script>
+        // GitHub 配置
+        const GITHUB_OWNER = 'zsl556';  // 你的 GitHub 用户名
+        const GITHUB_REPO = 'worldcup';  // 仓库名称
+        const DATA_FILE_PATH = 'data/worldcup-data.json';  // 数据文件路径
+        const GITHUB_TOKEN = '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';  // GitHub Personal Access Token
+        
         // 获取所有玩家
         const players = ['IF', 'ZSL', '郑朝北', '周先生'];
         
@@ -431,11 +517,134 @@
             
             alert('数据已保存！文件名为：争霸世界杯_' + timestamp + '.html');
         }
-
-        // 页面加载完成后初始化
-        window.onload = function() {
+        
+        // 显示状态消息
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = 'status-message status-' + type;
+            statusEl.style.display = 'block';
+            
+            // 3秒后自动隐藏
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 3000);
+        }
+        
+        // 收集当前表格数据
+        function collectTableData() {
+            const data = {
+                timestamp: new Date().toISOString(),
+                players: {}
+            };
+            
+            players.forEach(player => {
+                data.players[player] = {
+                    bets: {},
+                    prizes: {},
+                    betSum: document.getElementById(`${player}-bet-sum`).textContent,
+                    prizeSum: document.getElementById(`${player}-prize-sum`).textContent,
+                    profit: document.getElementById(`${player}-profit`).textContent
+                };
+                
+                // 收集下注金额
+                const betAmounts = document.querySelectorAll(`tr:nth-child(2n+1) .bet-amount[data-player="${player}"]`);
+                betAmounts.forEach(input => {
+                    const date = input.getAttribute('data-date');
+                    data.players[player].bets[date] = input.value || '0';
+                });
+                
+                // 收集理论奖金
+                const prizeAmounts = document.querySelectorAll(`tr:nth-child(2n) .prize-amount[data-player="${player}"]`);
+                prizeAmounts.forEach(input => {
+                    const date = input.getAttribute('data-date');
+                    data.players[player].prizes[date] = input.value || '0';
+                });
+            });
+            
+            // 总净收益
+            data.totalNet = document.getElementById('total-net').textContent;
+            data.firstPlace = document.getElementById('firstPlaceDisplay').textContent;
+            
+            return data;
+        }
+        
+        // 保存到 GitHub
+        async function saveToGitHub() {
+            // 使用内置的 Token
+            const token = GITHUB_TOKEN;
+            
+            try {
+                showStatus('⏳ 正在保存到云端...', 'loading');
+                
+                // 收集数据
+                const data = collectTableData();
+                const content = JSON.stringify(data, null, 2);
+                
+                // 先将内容转换为 base64
+                const base64Content = btoa(unescape(encodeURIComponent(content)));
+                
+                // GitHub API URL
+                const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${DATA_FILE_PATH}`;
+                
+                // 先检查文件是否存在
+                let sha = null;
+                try {
+                    const checkResponse = await fetch(apiUrl, {
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        }
+                    });
+                    
+                    if (checkResponse.ok) {
+                        const existingFile = await checkResponse.json();
+                        sha = existingFile.sha;
+                    }
+                } catch (e) {
+                    // 文件不存在，继续创建
+                }
+                
+                // 准备请求数据
+                const requestData = {
+                    message: `更新数据 - ${new Date().toLocaleString('zh-CN')}`,
+                    content: base64Content
+                };
+                
+                if (sha) {
+                    requestData.sha = sha;
+                }
+                
+                // 发送请求到 GitHub API
+                const response = await fetch(apiUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || '保存失败');
+                }
+                
+                showStatus('✅ 数据已成功保存到云端！', 'success');
+                
+                // 不再保存 token 到本地存储，因为已内置
+                
+            } catch (error) {
+                console.error('保存失败:', error);
+                showStatus('❌ 保存失败：' + error.message, 'error');
+            }
+        }
+        
+        // 页面加载时初始化
+        window.addEventListener('load', function() {
             calculateTotals();
-        };
+        });
         
         // 页面加载完成后初始化
         window.onload = function() {
